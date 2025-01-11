@@ -56,9 +56,6 @@ sudo chmod +x /usr/local/bin/docker-compose
 docker --version
 docker-compose --version
 
-docker --version
-docker-compose --version
-
 # === 6. Создание Docker-сетей ===
 echo "Creating Docker networks..."
 docker network create frontend || true
