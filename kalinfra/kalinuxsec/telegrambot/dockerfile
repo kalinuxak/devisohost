@@ -1,0 +1,18 @@
+FROM python:3.10-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy bot files
+COPY . .
+
+# Environment variables for tokens
+ENV BOT1_TOKEN=${BOT1_TOKEN}
+ENV BOT2_TOKEN=${BOT2_TOKEN}
+
+# Run both bots
+CMD ["python", "botsyssec.py", "&&", "python", "firewallbulderbot/firewallbuilderv1.py"]

@@ -1,0 +1,115 @@
+#!/bin/bash
+
+set -e
+
+# === 1. Сбор входных данных ===
+echo "Please enter your domain name (e.g., example.com):"
+read DOMAIN_NAME
+DOMAIN_NAME=${DOMAIN_NAME:-"example.com"}
+
+echo "Please enter your server IP address (e.g., 192.168.1.1):"
+read SERVER_IP
+SERVER_IP=${SERVER_IP:-"127.0.0.1"}
+
+echo "Please enter custom Apache port:"
+read APACHE_PORT
+APACHE_PORT=${APACHE_PORT:-8080}
+
+echo "Please enter custom SSH port:"
+read SSH_PORT
+SSH_PORT=${SSH_PORT:-2222}
+
+# === 2. Проверка файлов ===
+if [[ ! -f kalinuxsec.zip ]]; then
+    echo "Error: kalinuxsec.zip not found. Aborting."
+    exit 1
+fi
+
+# === 3. Распаковка архива ===
+echo "Unpacking kalinuxsec.zip..."
+unzip -o kalinuxsec.zip -d ./kalinuxsec
+
+echo "Configuring settings..."
+find ./kalinuxsec/configs -type f -exec sed -i "s/{{SERVER_DOMAIN}}/${DOMAIN_NAME}/g" {} \;
+find ./kalinuxsec/configs -type f -exec sed -i "s/{{SERVER_IP}}/${SERVER_IP}/g" {} \;
+find ./kalinuxsec/configs -type f -exec sed -i "s/{{WEBSERVER_PORT}}/${APACHE_PORT}/g" {} \;
+find ./kalinuxsec/configs -type f -exec sed -i "s/{{SSH_PORT}}/${SSH_PORT}/g" {} \;
+
+# === 4. Установка системных зависимостей ===
+echo "Updating system and installing dependencies..."
+export DEBIAN_FRONTEND=noninteractive
+sudo apt-get update && sudo apt-get upgrade -y
+sudo apt-get install -y \
+  zip unzip curl git software-properties-common gnupg2 \
+  clamav chkrootkit rkhunter lynis iptables ipset fail2ban \
+  nginx apache2 python3 python3-pip python3-venv \
+  certbot python3-certbot-nginx apt-transport-https \
+  docker-ce docker-ce-cli containerd.io
+
+# === 5. Установка Docker Compose ===
+if ! command -v docker-compose &> /dev/null; then
+    echo "Installing Docker Compose..."
+    sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+    sudo chmod +x /usr/local/bin/docker-compose
+fi
+
+docker --version
+docker-compose --version
+
+# === 6. Создание Docker-сетей ===
+echo "Creating Docker networks..."
+docker network create frontend || true
+docker network create backend || true
+
+# === 7. Деплой через Docker Compose ===
+echo "Starting services with Docker Compose..."
+cd ./kalinuxsec
+
+# Проверяем корректность docker-compose.yaml перед запуском
+docker-compose config
+if [ $? -ne 0 ]; then
+    echo "Error: Invalid docker-compose configuration."
+    exit 1
+fi
+
+docker-compose up --build -d
+
+# === 8. Настройка Nginx и Apache ===
+echo "Setting up Nginx and Apache configurations..."
+openssl dhparam -out /etc/ssl/nginx-dhparam.pem 2048
+
+# Настраиваем Nginx
+NGINX_CONF="./kalinuxsec/configs/nginx/kalidev.conf"
+sudo cp $NGINX_CONF /etc/nginx/conf.d/kalidev.conf
+sudo nginx -t && sudo systemctl restart nginx
+
+# Настраиваем Apache
+APACHE_CONF="./kalinuxsec/configs/apache2/kalidev.conf"
+sudo cp $APACHE_CONF /etc/apache2/sites-available/kalidev.conf
+sudo ln -sf /etc/apache2/sites-available/kalidev.conf /etc/apache2/sites-enabled/
+sudo apachectl configtest && sudo systemctl restart apache2
+
+# === 9. Настройка Gunicorn ===
+echo "Setting up Gunicorn service..."
+sudo cp ./kalinuxsec/configs/flaskapp.service /etc/systemd/system/flaskapp.service
+sudo systemctl daemon-reload
+sudo systemctl enable flaskapp.service
+sudo systemctl start flaskapp.service
+
+# === 10. Настройка Fail2Ban ===
+echo "Configuring Fail2Ban..."
+sudo cp ./kalinuxsec/configs/fail2ban/jail.local /etc/fail2ban/jail.local
+sudo systemctl restart fail2ban
+
+# === 11. Настройка Firewall ===
+echo "Configuring Firewall..."
+sudo ufw allow ${APACHE_PORT}/tcp
+sudo ufw allow ${SSH_PORT}/tcp
+sudo ufw allow 443/tcp
+sudo ufw reload
+
+# === 12. Завершение ===
+echo "Cleaning up temporary files..."
+rm -rf kalinuxsec.zip
+
+echo "Deployment completed successfully! Access your application via https://$DOMAIN_NAME or https://$SERVER_IP."
