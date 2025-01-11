@@ -18,7 +18,7 @@ services:
 
   apache:
     build:
-      context: ./configs/apache2
+      context: ./kalinuxsec/configs/apache2
       dockerfile: Dockerfile
     container_name: apache
     ports:
@@ -29,7 +29,7 @@ services:
 
   nginx:
     build:
-      context: ./configs/nginx
+      context: ./kalinuxsec/configs/nginx
       dockerfile: Dockerfile
     container_name: nginx
     ports:
